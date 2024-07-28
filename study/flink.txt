@@ -1,0 +1,7 @@
+bug: VertexInputInfoComputationUtils  无
+
+2024-04-13 14:12 计划学习akka，excution graph，job graph，state backen，
+
+flink中SplitEnumerator如何将split均匀分配给下游
+1.分配总是增量的。换言之，分配中的拆分只是添加到现有分配中。
+2.SplitEnumerator的start方法中，可以定制数据分配策略，

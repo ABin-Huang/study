@@ -1,0 +1,51 @@
+clickhouse
+列式存储，离线数据处理（实时也可以），不利于数据频繁修改
+
+数据库引擎
+
+表引擎：
+决定数据存储方法和位置
+支持哪些查询，如何支持
+并发数据访问
+索引使用（如果存在）
+是否支持多线程请求
+数据复制参数
+
+MergeTree 重要
+ReplacingMergeTree 重要
+SummingMergeTree
+AggregatingMergeTree
+CollapsingMergerTree
+GraphiteMergeTree
+
+日志：具有最小功能的轻量级引擎（快速写入小表100w行）
+TinyLog, StripeLog, Log
+
+集成引擎：用于与其他数据存储与处理系统集成的引擎
+kafka， mysql， ODBC， JDBC， HDFS
+
+
+MergeTree 重要
+建表： create table t_stock{
+	id UInt32;
+	sku_id String,
+	total_amount Decimal(16,2),
+	create_time Datetime
+          ) engine = MergeTree
+          partition by toYYYYMMDD(create_time)
+          primary key(id)
+          order by(id,sku_id);
+
+分区键：降低数据扫描范围，优化查询速度，如按天分区，
+如果不填相当于只有一个分区（每个区进而分块，可使每个区不会过大）
+
+排序键：指定分区内的数据按那个字段排序（必填）
+
+主键：
+
+
+
+ReplacingMergeTree 重要
+数据的去重在数据合并期间进行，合并时间不确定。不能保证数据没有重复
+
+根据order by去重，同一批数据或后台定时	数据合并

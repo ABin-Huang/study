@@ -1,0 +1,76 @@
+elasticSearch
+
+
+集群（每个集群都有名称，默认elasticsearch）
+
+1. Shards & Replicas（分片 & 副本）
+ Elasticsearch 分片是一个 Lucene 索引，单个 Lucene 索引中有一个最大的文档数量限制2,147,483,519
+单节点硬件限制，es提供Index拆分到多个shard的能力
+每个Index【 默认5 个主分片和 1 个副本】
+Sharding（分片）非常重要两个理由是 :
+
+水平的拆分/扩展。
+分布式和并行跨 Shard 操作（可能在多个节点），从而提高了性能/吞吐量。
+
+
+副本非常重要的两个理由是 :
+
+在 shard/node 故障的情况下提供了高可用性。为了达到这个目的，需要注意的是在原始的/主 Shard 被复制时副本的 Shard 不会被分配到相同的节点上。
+它可以让你水平扩展搜索量/吞吐量，因为搜索可以在所有的副本上并行执行。
+
+注意【分片和副本的数量在索引被创建时都能够被指定。
+在创建索引后，您也可以在任何时候动态的改变副本的数量，但是不能够改变分片数量。】
+
+
+es如何实现分布式
+1.es可以创建多个节点（集群），es存储数据的基本单位是索引(lucene)，
+2.索引可拆分多个shard（分片）【主分片可配置副分片，
+主分片写入后会同步副本，副本提供查询】，
+3.es集群会有一个master节点，负责管理，维护索引元数据，切换主副分片，
+如非master节点宕机，宕机节点上的 primary shard 的身份转移到其他机器上的 replica shard，
+之后修复该节点后，不会成为主分片，而是为副分片
+
+es写入数据的工作原理
+commit point:记录所有 segments 的信息
+
+基本流程：
+1.客户端选择coordinating node（协调节点）
+2.coordinating node对数据hash，确定主shard分片的node，对document路由
+3.主分片处理请求，将数据同步副本
+4.coordinating node发现主副node都完成后，响应客户端
+
+底层原理【数据写入磁盘文件之前，会先进入os cache，先进入操作系统级别的一个内存缓存中去，再进入磁盘】
+1.写入buffer，同时将数据写入translog日志文件（记录操作，防止宕机buffer数据丢失，重启读取）
+2.如果buffer快满了，或者到一定时间，就会将buffer数据refresh到一个新的segment file中，
+但是此时数据不是直接进入segment file的磁盘文件的（默认每隔1秒钟），
+而是先进入os cache的。这个过程就是refresh（能够被查询）。
+3.重复上述步骤，translog会主键增大，当translog达到一定长度的时候，就会触发 translog 的commit操作。
+4.commit操作发生第一步，就是将buffer中现有数据refresh到os cache中去，清空buffer
+5.将一个commit point写入磁盘文件，里面标识着这个commit point对应的所有segment file
+6.强行将os cache中目前所有的数据都fsync到磁盘文件中去
+7.清空translog，重新启用一个translog，commit完成（叫做flush操作，每隔三十分钟）
+【translog其实也是先写入os cache的，默认每隔5秒刷一次到磁盘中去】
+8.定期执行merge合并segment  file【物理删除标识为deleted】,删除旧的segment file
+
+删除操作
+1.commit的时候会生成一个.del文件(磁盘)，将某个doc标识为deleted状态，那么搜索的时候根据.del文件就知道这个doc被删除了
+
+更新操作
+1.将原来的doc标识为deleted状态，然后新写入一条数据
+
+
+es查询原理
+原理
+1.客户端请求一个 coordinate node
+2. 协调节点将搜索请求转发到所有的 shard 对应的 primary shard 或 replica shard 
+3.每个 shard 将自己的搜索结果（其实就是一些 doc id，如果排序还会返回排序信息 ）返回给协调节点，
+由协调节点进行数据的合并、排序、分页等操作
+4.协调节点根据doc id从各个节点获取document，返回结果
+
+数据量大时优化查询
+1.让数据在内存，增加filesystem cache
+2.查询字段放在es，结合hbase查询（尽可能减少无用数据在es内存）
+3.数据预热（写个程序主动请求热点数据）
+4.冷热数据分离（分开写索引）
+5.分页查询使用scroll api，一次性生成所有数据的快照
+

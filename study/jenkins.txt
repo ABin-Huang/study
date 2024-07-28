@@ -1,0 +1,21 @@
+echo "登录阿里云镜像"
+docker login --username=广东扬清风 registry.cn-guangzhou.aliyuncs.com --password=ttt242324
+echo "构建dcloud-common"
+cd dcloud-common
+mvn install
+ls -alh
+
+
+ls -alh
+cd dcloud-account
+ls -alh
+echo "账号服务构建开始"
+mvn install -Dmaven.test.skip=true dockerfile:build
+docker tag dcloud/dcloud-account:latest registry.cn-guangzhou.aliyuncs.com/hb-dcloud/dcloud-account:v1.1
+docker push registry.cn-guangzhou.aliyuncs.com/hb-dcloud/dcloud-account:v1.1
+mvn clean
+echo "账号服务构建推送成功"
+echo "=======构建脚本执行完毕====="
+
+917 440 431
+4rx7

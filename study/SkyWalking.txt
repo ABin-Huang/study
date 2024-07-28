@@ -1,0 +1,5 @@
+SkyWalking
+
+-javaagent:D:\work\apache-skywalking-apm-bin\agent\skywalking-agent.jar
+-DSW_AGENT_NAME=cloud-gateway
+-DSW_AGENT_COLLECTOR_BACKEND_SERVICES=127.0.0.1:11800

@@ -1,0 +1,53 @@
+1秒杀
+
+idea分析外部堆栈： 双击shift，点击action，输入Analyze Stack Trace or Thread Dump
+
+2海量数据更新
+ （1）定时任务，更新活跃用户
+ （2）使用时先判断，在更新
+
+
+3创建短链
+ 扣减流量包
+ redis预扣减，发送mq消费，保存task任务，扣减流量包库存
+
+kafka
+clickhouse
+flink
+elesticsearch
+
+边缘计算
+
+
+可插拔消息应用
+
+
+========== 分库分表===========
+主流程都是SQL解析-->SQL路由-->SQL改写-->结果归并
+
+1.range（时间-每天，创建时间、空间-省，市区）。数据热点问题。
+2.hash（库位-用户id取余库数量，表位-用户id除以库数量求余表数量）。数据分布均匀，但不易扩容
+
+3.行表达式分片策略 InlineShardingStrategy-- 只支持【单分片键】使用Groovy的表达式，提供对SQL语句中的 =和IN 的分片操作支持
+prouduct_order_$->{user_id % 8}` 表示订单表根据
+user_id模8，而分成8张表，表名称为
+`prouduct_order_0`到`prouduct_order_7
+
+4.标准分片策略StandardShardingStrategy--只支持【单分片键】，提供PreciseShardingAlgorithm和RangeShardingAlgorithm两个分片算法
+PreciseShardingAlgorithm 精准分片 是必选的，用于处理=和IN的分片。
+RangeShardingAlgorithm 范围分配 是可选的，用于处理BETWEEN AND分片。
+如果不配置RangeShardingAlgorithm，如果SQL中用了BETWEEN AND语法，则将按照全库路由处理，性能下降。
+
+5.复合分片策略ComplexShardingStrategy支持【多分片键】，多分片键之间的关系复杂，由开发者自己实现，提供最大的灵活度
+提供对SQL语句中的=, IN和BETWEEN AND的分片操作支持。
+prouduct_order_0_0、prouduct_order_0_1、
+prouduct_order_1_0、prouduct_order_1_1
+prouduct_order_$->{user_id % 8}` 表示订单表根据
+user_id模8，而分成8张表，表名称为
+`prouduct_order_0`到`prouduct_order_7
+
+流量包traffic表使用account_no作为分片键，分片算法account_no%2（水平分表策略+行表达式分片）
+
+雪花算法：0-41bit时间戳-10bit机器id（数据中心+机器id）-12bit序列号
+短链码：源地址通过murmurhash获得32bit的值（43亿），再转62进制得到六位字符串，在前后加上库表位得到短链码（使用自定义分片策略-避免扩容带来数据迁移）
+

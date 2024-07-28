@@ -1,0 +1,20 @@
+hippo
+通过监听器
+nacosConfigManager.getConfigService().addListener(nacosConfig.get(DATA_ID),
+                nacosConfig.get(GROUP), new Listener() {
+
+                    @Override
+                    public Executor getExecutor() {
+                        return dynamicRefreshExecutorService;
+                    }
+
+                    @Override
+                    public void receiveConfigInfo(String configInfo) {
+                        dynamicRefresh(configInfo);
+                    }
+                });
+通过spring事件刷新线程池配置            ApplicationContextHolder.getInstance().publishEvent(new Hippo4jConfigDynamicRefreshEvent(this, binderCoreProperties));
+
+
+dynamic-Tp
+通过监听器

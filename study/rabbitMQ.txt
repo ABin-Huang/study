@@ -1,0 +1,195 @@
+ mq缺点
+1系统可用性降低 容易挂掉，影响系统正常服务
+2消息重复消费，消息丢失
+3消息传递顺序
+4数据一致性
+
+
+原理
+消息在信道中传输（信道设置confirm模式，信道上发布的消息都会被指派一个唯一的ID，若失败。发送nack给系统，可以进行重试处理）
+
+消费消息模式
+1.推模式：消息主动推送给消费者，消费者设置缓冲区存取数据，容易缓冲区溢出，当然投递消息的个数还是会受到channel.basicQos的限制。
+ 解决缓冲区溢出：1）令牌桶限流 2）多级缓存
+2.拉模式：消费者需要定时拉取数据（批量拉取），网络开销延迟，实时性不高
+
+消息可靠性
+1生产者发送消息至mq  解决：事务机制和Confirm机制(普通，批量，异步)，注意：事务机制和 Confirm 机制是互斥的，两者不能共存，会导致 RabbitMQ 报错。
+2mq保存失败 解决：持久化、集群、普通模式、镜像模式。
+3mq返回程序失败 解决：basicAck机制、死信队列、消息补偿机制。
+4.消费者确认模式：仅通过Consumer的连接中断来确认是否需要重新发送消息
+
+cosumer（批量拉取，缓存在队列中，待消费完ack返回，使用推模式，效率高，数据批量存储在本地的缓冲区）
+消息分配方式（负载均衡）
+  1.Work-queue（每个消息只会被一个消费者处理。）：消息均匀地分配给每个消费者，需要等待其他消费者处理完相应的消息后，才能继续处理下一个消息。
+  2.Round-robin （每个消息会被所有消费者获取并处理）
+  维护一个指向下一个可用服务器的指针，初始值为0。
+  当有请求到达时，将请求分配给指针所指向的服务器进行处理，并将指针加1。
+  如果指针超过了服务器的数量，则将指针重置为0，重新开始分配请求。
+  重复以上步骤，直到所有请求都得到处理。
+3.Random
+4.最少连接数（Least Connections）：将消息分配给当前连接数最少的消费者进行处理。
+5.散列（Consistent Hashing）：使用一致性哈希算法将消息分配给指定的消费者进行处理。
+6.手动分配（Manual）：手动指定消息的处理者进行处理。
+
+
+
+producer --connection--channel--->broker
+producer ->>exchange  setting values
+producer -->> queue setting values
+producer -->binding exchanger and queue by routingKey 
+producer -->send message(routingKey,exchange)
+
+进入死信队列的条件
+1消息被拒绝
+2消息ttl过期
+3队列满了
+
+延迟队列
+在一段时间后才能消费消息
+
+
+高可用
+镜像集群模式：
+
+x-max-priority：设置高 优先级队列（情况：消息积压）
+
+
+openSession:获取environment（driver，url，username，pwd），开启事务，获取执行器excutor
+
+newExecutor()方法会遍历插件
+
+mybatis	
+    接口和xml如何映射：解析mapper文件(将类和对应的mapperProxyFactory放入map)
+    和xml文件（将namespace的type【mapper接口】存入strictMap map）
+    最后MapperRegistry的getMapper方法会通过map获取mapperProxyFactory通过代理创建mapper接口代理对象
+
+
+执行sql的流程
+sqlSessionFactoryBuilder->sqlSessionFactory->sqlSession->excutor->statementHandler->
+parameterHandler->resultSetHandler
+
+拦截器：excutor,statementhandler,parameterhandler,resultsethandler
+
+
+oauth2.0
+
+
+ribbon：使用loadBalancer获取所有服务
+@ribbonclients{@ribbonclient(name,value )}
+1.随机
+2.轮询
+3.加权轮询：通过服务器性能的分析，给高配置，低负载的服务器分配更高的权重，均衡各个服务器压力
+3.地址hash：通过客户端请求地址的hash值取模映射服务器， hash（ip）%服务器数量
+4.最小链接数：寻找机器最小连接数，
+
+loadBalancer：获取所有服务，并实现了负载均衡
+
+
+openfeign
+1.基于面向接口的动态代理方式生成实现类		
+2.基于requestBean，动态生成request，使用loadbalance获取服务，ribbon负载均衡得到地址
+3.使用encoder将bean转换成http报文正文
+4.拦截器对请求和返回进行装饰处理
+5.发送http请求
+优化，压缩使用gzip，使用http连接池
+
+2.okhttp，httpclient（集成），urlcon
+3.注册执行，负载的关系
+4.feign接口隔离
+
+
+aqs 抽象的队列同步器 AbstractQueuedSynchronizer【state有无占有锁 waiteStatus是否可以竞争锁】
+由volatile state，ExclusiveThread, node(pre,next指针，fifo队列)，使用lucksupport控制线程
+head，tail，waiteStatus（head为signal-1，其他为0），双向链表快速实现中断和唤醒（next）
+condition（每个condition对应一个条件队列，不使用per，next，使用nextwaiter，需要了解中断模式）
+
+入队（addWaiter方法）：
+1.addWaiter方法后执行acquireQueued方法，判断传入节点的前置节点是否为head，是则尝试加锁，
+加锁成功将当前node设置为head，置空之前head。否则如果加锁失败或node的前置节点不为head，
+将head的waitWtatus=signal（-1）,调用locksupport.park（）挂起node线程，tail线程指向node
+2.当线程3入队，修改线程2node的waiteStatus=signal，挂起线程3
+
+
+唤醒：
+1.修改head节点state=0（0无占用 1占有），waiteStatus=0，ExclusiveThread=null
+2.唤醒挂起线程（head next节点）
+3.cas修改唤醒线程state的值
+4.修改state=1 或者 修改失败，继续挂起
+
+公平锁和非公平锁区别
+公平锁：后面进来的线程直接排队等待获取锁
+非公平锁：入队等待前或尝试取抢锁，抢锁失败则排队等待
+
+final void lock() {
+  //先竞争锁，若能竞争成功，则占有锁资源
+    if (compareAndSetState(0, 1))
+      //将独占线程成员变量设置为当前线程，表示占有锁资源的线程
+        setExclusiveOwnerThread(Thread.currentThread());
+    else
+        acquire(1);  //公平锁的lock方法只有acquire(1),且两者实现不同
+}
+
+公平锁acquire(1)：
+1:head和tail都为null，通过cas竞争锁
+2:head和tail不为null，，同步队列已经初始化，head.next节点为当前node，尝试获取锁资源
+若head.next节点不为当前node，加入等待队列。
+
+非公平锁acquire(1)：
+1.获取state值，判断锁状态，若处于无锁状态，cas获取锁资源。若锁被占用，判断当前线程与占有资源
+是否为同一个线程，是则state加一
+2.抢锁失败，进入等待队列
+
+CANCELLED：由于超时或中断，此节点被取消。节点一旦被取消了就不会再改变状态。特别是，取消节点的线程不会再阻塞。
+static final int CANCELLED =  1;
+ SIGNAL:此节点后面的节点已（或即将）被阻止（通过park），因此当前节点在释放或取消时必须断开后面的节点
+ 为了避免竞争，acquire方法时前面的节点必须是SIGNAL状态，然后重试原子acquire，然后在失败时阻塞。
+static final int SIGNAL    = -1;
+ 此节点当前在条件队列中。标记为CONDITION的节点会被移动到一个特殊的条件等待队列（此时状态将设置为0），
+直到条件时才会被重新移动到同步等待队列 。（此处使用此值与字段的其他用途无关，但简化了机制。）
+static final int CONDITION = -2;
+传播：应将releaseShared传播到其他节点。这是在doReleaseShared中设置的（仅适用于头部节点），以确保传播继续，即使此后有其他操作介入。
+static final int PROPAGATE = -3;
+
+0:以上数值均未按数字排列以简化使用。非负值表示节点不需要发出信号。所以，大多数代码不需要检查特定的值，只需要检查符号。
+对于正常同步节点，该字段初始化为0；对于条件节点，该字段初始化为条件。它是使用CAS修改的（或者在可能的情况下，使用无条件的volatile写入）。
+
+
+权限管理
+
+1.RBAC (Role-Based Access Control) 基于角色的权限访问控制。即用户拥有角色,角色拥有权限
+2.ABAC(attribute-based access control)访问控制利用了一组称为 “属性 “的特征。这包括用户属性、环境属性和资源属性。
+用户属性：包括如用户的姓名、角色、组织、ID 和安全许可等内容。
+环境属性：包括如访问时间、数据的位置和当前组织的威胁等级。
+资源属性：包括如创建日期、资源所有者、文件名和数据敏感性。
+
+mysql两阶段提交：1.undologs写redolog（prepare） 2.写binlog  3.写redolog(commit)
+rodolog中记录了XID，binlog中没有，MySQL就会RollBack
+
+分布式事务
+
+柔性事务：基于base事务。（TCC）
+基本可用（Basically Available）保证分布式事务参与方不一定同时在线。
+柔性状态（Soft state）则允许系统状态更新有一定的延时，这个延时对客户来说不一定能够察觉。
+而最终一致性（Eventually consistent）通常是通过消息传递的方式保证系统的最终一致性。
+适用长事务或高并发
+
+seata（AT相比XA协议更快，一阶段使用异步删除undolog，TCC）： TM(事务管理器)，RM(资源管理器)，TC(事务协调器)
+
+刚性事务：实现了ACID的事务要素的事务（xa协议，两，三阶段提交）。会对资源进行锁定，
+ xa_prepare：询问 RM 是否准备好提交事务分支
+ xa_commit：通知 RM 提交事务分支【提交超时】
+适用短事务或低并发【没有超时机制，可能会长时间占用锁】
+
+与传统的本地事务相⽐，XA 事务增加了准备阶段，数据库除了被动接受提交指令外，还可以反向通知调⽤⽅事务是否可以被提交。
+TM 可以收集所有分⽀事务的准备结果，并于最后进⾏原⼦提交，以保证事务的强⼀致性。
+
+三阶段与二阶段相比做了哪些改进：
+1、引入超时机制。同时在每个阶段协调者和参与者中都引入超时机制。
+2、在第一阶段和第二阶段中插入一个准备阶段。保证了在最后提交阶段之前各参与节点的状态是一致的。
+
+与传统的本地事务相⽐，XA 事务增加了准备阶段，数据库除了被动接受提交指令外，
+还可以反向通知调⽤⽅事务是否可以被提交。TM 可以收集所有分⽀事务的准备结果，并于最后进⾏原⼦提交，以保证事务的强⼀致性。
+【TCC每一个步骤都是一次完整的事务，也就是说都落地到数据库中，数据库中的数据都发生了改变】
+
+

@@ -1,0 +1,62 @@
+nacos架构
+
+Nacos提供了SDK和Open API两种形式来实现服务注册。
+
+Provider APP：服务提供者
+Consumer APP：服务消费者
+Name Server：通过VIP（Virtual IP）或DNS的方式实现Nacos高可用集群的服务路由
+Nacos Server：Nacos服务提供者，里面包含的Open API是功能访问入口，
+Conig Service、Naming Service 是Nacos提供的配置服务、命名服务模块。
+Consitency Protocol是一致性协议，用来实现Nacos集群节点的数据同步，这里使用的是Raft算法（Etcd、Redis哨兵选举）
+Nacos Console：控制台
+
+namespace: <group: service(servicename: instance)>
+
+基本流程
+1.服务注册
+2.服务获取
+3.动态感知服务提供者状态（心跳检测5秒一次，15秒不健康，30移除）
+4.消费端实时获取服务提供者最新状态（定时拉取，主动通知udp协议）
+5.动态dns
+6.同步数据其他节点
+
+临时节点：distro协议
+持久节点：raft协议
+
+raft:
+Leader：所有请求的处理者，Leader副本接受client的更新请求，本地处理后再同步至多个其他副本；
+Follower：请求的被动更新者，从Leader接受更新请求，然后写入本地日志文件
+Candidate：如果Follower副本在一段时间内没有收到Leader副本的心跳，则判断Leader可能已经故障，此时启动选主过程，此时副本会变成Candidate状态，直到选主结束。
+
+nacos集成到spring-cloud
+1.spring-cloud提供ServiceRegistry，
+2.META-INF/spring.factories包含AutoServiceRegistrationAutoConfiguration类，
+3.NacosAutoServiceRegistration继承了AbstractAutoServiceRegistration
+4.AbstractAutoServiceRegistration实现了EventListener接口【Nacos是通过Spring的事件机制注册springCloud】
+5.AbstractAutoServiceRegistration实现了onApplicationEvent抽象方法,并且监听WebServerInitializedEvent事件(当Webserver初始化完成之后) ,
+
+高性能：注册节点时（采用异步加阻塞队列）
+
+dubbo spi
+
+1.0版本缺点
+1.心跳多【接口级服务较多时，心跳及配置元数据的轮询数量众多，导致集群TPS很高，系统资源高度空耗】
+2.无效查询多【UDP不可靠，客户端每隔一段时间获取最新服务列表，客户端规模上升，大多数服务列表其实不会频繁改变，造成无效查询】
+3.心跳续约感知变化慢【默认为15s，时延较长，时效性差。若改短超时时间，当网络抖动时，会频繁触发变更推送】
+4.连接消耗大【HTTP短连接模型，每次客户端请求都会创建和销毁TCP链接，TCP协议销毁的链接状态是WAIT_TIME，完全释放还需要一定时间】
+5.频繁GC【HTTP短连接阻塞模型来模拟长连接通信，每30秒需要进行一次请求和数据的上下文切换，每一次切换都有引起造成一次内存浪费，从而导致服务端频繁GC】
+
+
+2.0版本
+改进
+1.增加了对长连接的支持，gRPC 和 Rsocket 实现了长连接 RPC 调用和推送能力。不需定时发送实例心跳
+2. TCP连接断开可以被快速感知到，提升反应速度。
+3.长连接的流式推送，比UDP更加可靠；nio的机制具有更高的吞吐量，而且由于可靠推送，
+   可以加长客户端用于对账服务列表的时间，甚至删除相关的请求。重复的无效QPS可以大幅降低。
+4.长连接避免频繁连接开销，可以大幅缓解TIME_ WAIT问题。，解决频繁GC
+
+
+缺点
+1长连接需要维护连接状态
+2.数据由无状态变为有状态
+3.RPC观测性不如Http

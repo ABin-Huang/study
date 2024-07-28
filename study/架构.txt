@@ -1,0 +1,30 @@
+wget --http-user=admin --http-password=xdclass.net111 http://47.115.31.28:9088/architect/arch_cloud.zip
+wget --http-user=admin --http-password=xdclass.net111 http://47.115.31.28:9088/architect/ddd.zip
+
+infrastructure 基础服务（包括controller，远程调用服务）
+application 应用层（不包含业务规则，为下一层中的领域对象做协调分配）
+application API接口层（对所有上层提供技术能力）
+domain   领域层（系统的核心，包含 模型，值对象，域服务，事件）
+
+
+主账号表
+CREATE TABLE `base_account` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `username` varchar(128) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT '昵称',
+  `head_img` varchar(524) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT '头像',
+  `gmt_create` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB AUTO_INCREMENT=6828373 DEFAULT CHARSET=utf8mb3 ROW_FORMAT=DYNAMIC;
+
+
+社交账号表
+CREATE TABLE `social_account` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `account_id` bigint DEFAULT NULL COMMENT '用户id',
+  `identity_type` varchar(128)  DEFAULT NULL COMMENT '登录类型：phone,mail,weixin,qq',
+  `identifier` varchar(256)  DEFAULT NULL COMMENT '登录账号唯一标识',
+  `credential` varchar(524)  DEFAULT NULL COMMENT '登录凭证，比如密码，token',
+  `gmt_create` datetime DEFAULT CURRENT_TIMESTAMP,
+  `union_id` varchar(524) DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB AUTO_INCREMENT=234541 DEFAULT CHARSET=utf8mb3 ROW_FORMAT=DYNAMIC;

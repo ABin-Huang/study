@@ -1,0 +1,22 @@
+结构：采用日志结构合并树(LSM tree)，LSM树由多个层次组成
+L0：MemTable（基于跳表(skip lists)，可用于有序查询和插入），MemTable位于内存中，保存最近插入的数据。
+L1：SSTable（Sorted String Table），驻留在磁盘上。
+
+
+MemTable（刷盘）-》不可变MemTable（进行排序并转换为）-》排序字符串表(SSTables)。
+
+LSM树中的每一级通常都比前一级大，这种设计可实现高效的数据压缩和合并。当某一级数据过大时，
+就会触发压缩过程，将其与下一级数据合并。在压缩过程中，多余和过时的条目会被删除，压缩后的SSTable会存储在下一级中。
+
+MemTable刷新
+当内存中的MemTable已满并被冻结时，RocksDB会使用后台线程定期将内存中的MemTable刷新到磁盘上。
+在刷新过程中，不可变的MemTable及其对应的WAL的内容会被写入磁盘。一旦刷新完成，
+不可变的MemTable和WAL就会被丢弃，然后RocksDB开始写入新的MemTable和WAL。
+每次刷新操作都会在L0层生成一个新的SST(sorted string table)文件。
+这些SST文件是不可变的，也就是说，一旦写入磁盘，就永远不会被修改。
+
+Sorted String Table（每个块都包含校验和，以确保数据的完整性，并检测任何潜在的损坏。索引部分）
+SST文件是基于块的文件，通常每个块的固定大小为4KB，可以使用Zlib、BZ2、Snappy、LZ4或ZSTD等各种算法进行压缩。
+
+合并和压缩操作
+压缩是合并多个SSTable并优化其存储的过程，包括将多个SSTable的数据合并和重写到数量较少的新SSTable中，消除冗余数据，提高读写性能。
