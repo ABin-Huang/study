@@ -1,0 +1,27 @@
+1.gateway请求流程（根据配置的路由对请求进行预处理 和 转发）
+（1）如果 Gateway Handler Mapping 找到与请求相匹配的路由，将其发送到 Gateway Web Handler。
+（2）Handler 再通过指定的 过滤器链 来将请求发送到我们实际的服务执行业务逻辑，然后返回。
+（3）过滤器之间用虚线分开是因为过滤器可能会在发送代理请求之前（“pre”）或之后（“post”）执行业务逻辑。
+
+
+2.三大组件
+（1）route：id，多个predicates和filters，会按照优先级排序
+（2）predicates：路由匹配条件，如路径，方法，header等，多个predicates会合并一个
+（3）filter：包括了处理请求和响应的逻辑，可以分为 pre 和 post 两个阶段。多个 Filter 在 pre 阶段会按优先级高到低顺序执行，post 阶段则是反向执行。
+全局 Filter: 每种全局 Filter 在 gateway 中只会有一个实例，会对所有的 Route 都生效。
+路由 Filter: 路由 Filter 是针对 Route 进行配置的，不同的 Route 可以使用不同的参数，因此会创建不同的实例。
+
+
+3.围绕上述三个组件， gateway 又衍生出了一些其他组件。
+RouteLocator
+RouteDefinitionLocator
+RoutePredicateHandlerMapping
+FilteringWebHandler
+
+4.优点
+● 基于Spring Framework 5、Reactor和Spring Boot 2.0框架。
+● 根据请求的属性可以匹配对应的路由。
+● 集成Hystrix。
+● 集成Spring Cloud DiscoveryClient。
+● 把易于编写的Predicates和Filters作用于特定路由。
+● 具备一些网关的高级功能，如动态路由、分布式限流（redis或自定义filter）、路径重写。

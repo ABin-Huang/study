@@ -1,0 +1,28 @@
+servlet单实例多线程模式
+Servlet如何处理多个请求访问？
+Servlet容器默认是采用单实例多线程的方式处理多个请求的：
+1.当web服务器启动的时候（或客户端发送请求到服务器时），Servlet就被加载并实例化(只存在一个Servlet实例)；
+2.容器初始化化Servlet主要就是读取配置文件（例如tomcat,可以通过servlet.xml的<Connector>设置线程池中线程数目，初始化线程池通过web.xml,初始化每个参数值等等。
+3.当请求到达时，Servlet容器通过调度线程(Dispatchaer Thread) 调度它管理下线程池中等待执行的线程（Worker Thread）给请求者；
+4.线程执行Servlet的service方法；
+5.请求结束，放回线程池，等待被调用；
+（注意：避免使用实例变量（成员变量），因为如果存在成员变量，可能发生多线程同时访问该资源时，都来操作它，照成数据的不一致，因此产生线程安全问题）
+
+客户端--》tomcat--》servlet容器--》调度线程(Dispatchaer Thread) 调度线程池中等待执行的线程（Worker Thread）给请求者--》创建一个servlet（如果不存在/helloword，并创建ServletRequest，ServletResponse）
+
+======spring启动流程=========
+1.加载并解析配置文件（application.properties、application.yml）
+2. 创建并初始化ApplicationContext（BeanFactory的实现类），作为Spring应用的上下文。这个上下文会加载Java配置类、扫描并注册Bean。
+3.注册并初始化Bean，扫描项目中的@Component、@Service、@Repository等注解。同时，Spring Boot还会根据自动配置类（如WebMvcAutoConfiguration）注册和初始化其他Bean。
+4. 调用Runner接口，Spring Boot实现了CommandLineRunner和ApplicationRunner接口（先执行），允许用户在应用启动后执行自定义逻辑。这两个接口的实现类会被Spring容器管理，并在应用启动时被调用。
+5. 启动内嵌服务器，如果项目是一个Web应用，Spring Boot会启动内嵌的服务器（如Tomcat）。这个服务器会监听指定的端口，等待HTTP请求。
+6. 显示启动信息，Spring Boot会显示启动信息，包括启动时间、监听端口等，并等待用户发送请求。
+
+
+1.beanFactory和applicationContext的区别
+回答：applicationContext多了国际化信息，获取资源文件，获取配置详细以及发布事件。
+
+
+BeanFactoryPostProcessor和BeanPostProcessor区别
+回答：BeanFactoryPostProcessor用于修改definition信息，另一个用于修改bean详细
+
