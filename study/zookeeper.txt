@@ -1,0 +1,45 @@
+1.什么是zookeeper
+答案：一个开源的分布式协同服务系统
+
+2.应用
+答案：配置管理、组成员管理、分布式锁。不适用大数据量存储
+
+3.zookeeper为什么使用层次模型
+答案：1.文件系统的树形结构便于表达数据之间的层次关系
+	2.文件系统的树形结构为不同的应用分配独立的命名空间
+
+4.znode节点分类
+答案：1.持久性znode(PERSISTENT) 2.临时性znode(EPHEMERAL) 3.持久顺序性znode(PERSISTENT_SEQUENTIAL) 4.临时顺序性znode(EPHEMERAL_SEQUENTIAL)
+
+5.zookeeper节点硬件要求
+答案：1.单独的服务器 
+	2.zookeeper在内存保存data tree。8G内存 
+	3.CPU消耗不高，有一个CPU核即可
+	4.存储设备写延迟会影响事务提交效率，建议为dataLogDir分配独占的SSD盘
+
+6.日志文件
+答案：生产环境建议使用ROOLINGFILE
+
+7.生产环境部署zookeeper
+答案： 1.申请多个服务器节点，每个节点有两个挂载盘
+	  2.每个节点安装JDK8
+	  3.每个节点为dataLogDir初始化独立我呢见系统/data，编辑/data/zookeeper/myid
+	  4.节点之间配置基于public key的ssh登录
+	  5.在一个节点解压zookeeper安装包，配置zoo.cfg。使用rsync吧目录同步其他节点
+
+8.zookeeper监控
+答案： telnet或ncat向zooke发出检查节点状态的命令
+	echo 命令 | ncat ip port
+
+	JMXL:jconsole(MBeans),
+	远程连接zookeeper，先在节点 export JMXPORT=8081
+
+9.zookeeperObserver
+答案：Observer不参与提交和选举投票的过程,作用实现跨数据中心部署
+	
+
+10.通过动态配置实现不中断服务的集群成员变更
+答案：
+
+11.ZooKeeper节点是如何存储数据的
+答案：快照
