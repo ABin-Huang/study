@@ -1,0 +1,191 @@
+共识算法:Paxos、ZAB、Raft(Leader 选举、日志同步、安全性) 等
+ 1.Leader选举，Leader故障后集群能快速选出新Leader；
+ 2.日志复制， 集群只有 Leader 能写入日志， Leader负责复制日志到Follower节点，并强制Follower节点与自己保持相同；
+ 3.安全性，一个任期内集群只能产生一个 Leader、已提交的日志条目在发生Leader选举时，一定会存在更高任期的新 Leader 日志中、各个节点的状态机应用的任意位置的日志条目内容应一样等。
+ 建分布式系统的核心要素角度:数据模型、复制、共识算法、API、事务、一致性、成员故障检测等方面
+
+ 角色，角色的作用
+ Follower，跟随者， 同步从 Leader 收到的日志，etcd 启动的时候默认为此状态；
+ Candidate，竞选者，可以发起 Leader 选举；
+ Leader，集群领导者， 唯一性，拥有同步日志的特权，需定时广播心跳给 Follower 节点，以维持领导者身份。
+
+ 多副本复制机制：主从负责(全同步复制、异步复制、半同步复制)、去中心化复制
+
+ 2.leader选举：当节点认为集群中没有leader节点时会发起选举，Follower先发起PreVote(默认关闭,避免节点长时间无法连通网络问题引起的leader选举)，进入 PreCandidate 状态，不自增任期号，若获得集群多数节点认可进入 Candidate 状态，并发起竞选Leader投票，若获得集群多数节点的支持后，就可转变成Leader节点
+  
+  2.1 初始化状态
+   所有节点初始状态为 Follower，每个节点维护以下状态：
+   currentTerm：当前任期编号，初始为 0，单调递增。
+   votedFor：当前任期内投票给的节点 ID，初始为 null。
+   log[]：日志条目，每个条目包含命令和创建该条目的 Leader 的任期编号。
+  2.2 触发选举
+   Leader 定期向 Follower 发送心跳（AppendEntries RPC），以维持其领导地位
+   如果 Follower 在预定的超时时间（election timeout，随机值，通常在 150-300ms 之间）内未收到 Leader的心跳，它会转变为Candidate并触发选举。
+  2.3 选举过程
+   增加任期编号：Candidate 将自己的 currentTerm 加 1。
+   投票给自己：Candidate 投票给自己，并将 votedFor 设置为自己的 ID。
+   请求投票：Candidate 向其他节点发送 RequestVote RPC，请求投票。
+   RPC 包含 term、candidateId、lastLogIndex 和 lastLogTerm，用于比较日志的一致性。
+   投票逻辑：
+     如果接收方的 currentTerm 大于请求方的 term，则拒绝投票。
+     如果接收方已经为当前任期投票给其他节点，则拒绝投票。
+     如果接收方的日志比请求方更完整，则拒绝投票。
+     投票结果：
+     如果 Candidate 收到超过半数节点的投票，则成为新的 Leader。
+     如果没有获得多数票，Candidate 保持 Candidate 状态，等待随机超时后重新发起选举。
+     如果在选举过程中收到其他节点的 AppendEntries RPC，且其 term 不小于当前节点的 term，则 Candidate 重新变为 Follower。
+  2.4 避免投票分裂
+   为了避免多个 Follower 同时超时并发起选举，Raft 使用随机超时时间（150-300ms）来减少同时触发选举的概率。
+   如果出现投票分裂（即没有节点获得多数票），Candidate 会增加任期编号并重新发起选举。
+  3. 日志一致性检查
+   在投票过程中，Raft 会比较日志的一致性：
+   如果 Candidate 的日志比投票节点的日志更完整（lastLogIndex 和 lastLogTerm 更大），则投票节点会投票给 Candidate。
+   这种机制确保只有日志最新的节点能够成为 Leader，从而保证了日志的一致性。
+  4. 选举完成后的行为
+   当一个节点成为 Leader 后，它会立即向所有 Follower 发送心跳（AppendEntries RPC），以维持其领导地位。
+   如果其他节点在选举过程中成为 Leader，Candidate 会重新变为 Follower。
+  5. 选举超时的权衡
+   较短的选举超时时间可以更快检测到 Leader 的失败，但可能导致更多的无效选举。
+   较长的选举超时时间可以减少无效选举，但会增加 Leader 失败后的不可用时间。
+
+ 3.日志复制--确保集群中所有节点日志一致性的关键机制
+  1. 客户端请求提交到 Leader
+    当客户端向 Leader 发起请求（如写入操作）时，Leader会将请求转换为一条日志条目（Entry），并将其追加到本地日志中。此时，该日志条目处于未提交状态（uncommitted），Leader不会立即更新本地数据。
+  2. Leader 将日志条目复制到 Follower
+    Leader 会通过 AppendEntries RPC 将新的日志条目并行地发送给所有 Follower 节点。AppendEntries RPC 包含以下内容：
+     当前 Leader 的任期号（Term）。
+     日志条目（Entries）。
+     前一个日志条目的索引值（PrevLogIndex）和任期号（PrevLogTerm），用于日志一致性检查。
+  3. Follower 处理日志条目
+    Follower 收到 AppendEntries RPC 后，会执行以下操作：
+     日志一致性检查：
+        如果 Follower 的日志与 Leader 不一致（如 PrevLogIndex 或 PrevLogTerm 不匹配），Follower 会拒绝该日志条目，并返回拒绝响应。
+     追加日志条目：
+        如果一致性检查通过，Follower 会将日志条目追加到本地日志中，并返回成功响应。
+  4. Leader 确认日志提交
+    Leader收到多数Follower的成功响应后，会将该日志条目标记为已提交（committed），并将其应用到本地状态机中。随后，Leader     会通过心跳消息或后续的 AppendEntries RPC 将最新的提交索引（Commit Index）同步给所有 Follower。
+  5. Follower 应用日志
+    Follower 在收到心跳消息或新的 AppendEntries RPC 后，会检查 Leader 的提交索引。如果 Follower    发现本地日志中存在未应用的已提交日志条目，它会将这些条目应用到本地状态机中。
+  6. 处理日志不一致
+    如果 Follower 拒绝了 Leader 发送的日志条目，Leader 会尝试以下操作：
+     回退日志索引：
+        Leader 会将 Follower 的 NextIndex 回退到 Follower 返回的拒绝提示（RejectHint）位置。
+     重新发送日志：
+        Leader 会重新发送从 NextIndex 开始的日志条目，直到 Follower 接受为止。
+  7. 优化：心跳消息中的提交索引
+    Raft 协议通过优化减少了消息延迟。Leader 的心跳消息（MsgHeartbeat）中会包含最新的提交索引，Follower   可以通过心跳消息直接了解需要应用的日志条目，而无需额外的提交通知。
+
+    NextIndex和MatchIndex是Leader维护的数组
+    NextIndex：Leader下一次将要发送给该 Follower 的日志条目的索引，当Follower成功追加日志后，Leader会将NextIndex增加1
+    MatchIndex：Follower已成功复制的最大日志条目索引，Leader 确认多数Follower的MatchIndex，该日志条目才会被标记为已提交
+
+ 4.安全性-- Leader 完全特性和只附加原则、日志匹配等安全机制
+    Leader 完全特性：某个日志条目在某个任期号中已经被提交，那么这个条目必然出现在更大任期号的所有Leader中。
+    只附加原则：Leader只能追加日志条目，不能删除已持久化的日志条目
+    日志匹配：Follower节点会检查相同索引位置的任期号是否与Leader一致，一致才能追加
+
+ 冲突解决机制：
+  1.找到一致的日志位置，Leader获取nextIndex，想follower发送下一条需要发送的日志条目索引，如果Follower拒绝（例如，PrevLogIn  或 PrevLogTerm 不匹配），Leader 会递减 nextIndex，并重新发送。直到找到 Leader 和 Follower 都认可的日志位置
+  2.删除冲突日志，Follower会删除该位置之后的所有冲突日志条目，Leader然后将自己从该位置之后的所有日志条目发送给Follower，确保  Follower的日志与Leader一致
+
+
+ 5.鉴权机制
+  密码认证(内外环境)：blowfish 算法，基于明文密码、随机分配的salt、自定义的 cost、迭代多次计算得到一个 hash 值，并将加密算法版本、salt 值、cost、hash 值组成一个字符串，作为加密后的密码。认证时，根据用户名获取密码信息，根据请求的明文密码，计算出最终的hash值，判断计算结果与存储一致。
+    优化：减少加密次数。使用Simple Token 和 JWT Token
+    Simple Token：当一个用户身份验证通过后，生成一个随机的字符串值，使用map存储用户和Token映射关系，token默认有效期5分钟，token不存储任何信息，导致客户端无法提前去规避因Token失效导致的请求报错。
+
+  证书认证
+
+  鉴权配置注意事项：
+   1.使用最小权限原则
+   2.合理设计权限模型，尽量通过角色继承来简化权限管理
+   3.鉴权日志不清晰，通过设置日志级别为debug
+   4.在版本升级前，备份当前的用户和角色配置。
+
+功能设计：
+ 1.高可用，支持多节点部署，读取和写入
+ 2.数据一致性(共识算法)，避免读取数据过期数据
+ 3.占用空间少，只存储关键元数据
+ 4.提供增删查改功能，监听数据变化机制，及时推送最新变更数据，提升服务可用性
+ 5.可维护性，遇到bug或人为操作错误导致节点宕机，或者及新增、替换节点，可通过API实现平滑地变更成员节点信息
+
+ zookeeper缺点
+  1.不支持通过 API 安全地变更成员，需要人工修改一个个节点的配置，并重启进程。变更姿势不正确，则有可能出现脑裂等严重故障
+  2.Java编写的，部署较繁琐，占用较多的内存资源。
+  3.RPC的序列化机制用的是 Jute，无法使用 curl 之类的常用工具与之互动
+
+
+
+串行读：直接读取状态机
+线性读(3.1)：需要经过 Raft 协议模块，反应的是集群共识
+  1.从leader获取最新已提交日志索引(committed index)
+  2.为防止脑裂等异常，leader向follower发送心跳确认，半数以上确认才能将已提交索引返回节点
+  3.从节点等待，直到状态机已提交索引大于等于leader索引，返回结果告诉从节点是否可以去状态机访问数据
+
+ 3.2：读请求通过走一遍 Raft 协议保证一致性， 这种 Raft log read 机制依赖磁盘 IO， 性能相比 ReadIndex 较差。
+
+ mvvc由treeIndex和boltdb组成
+ 从 treeIndex 中获取 key 的keyIndex，包含所有版本号，再以key:version作为 boltdb 的 key，从 boltdb 中获取其 value 信息。
+
+
+type keyIndex struct {
+    key         []byte // key 的值
+    modified    Revision // 最后一次修改的 main revision
+    generations []generation // 保存了 key 的历史版本 没删除一次然后添加一次就是一个 generation
+}
+ 
+type Revision struct {
+    // 就是 revision 的值，比如上边的 15 等
+    Main int64
+    // 子 revision 的值 主要是在事务中使用 比如事务中多个操作 那么就是 0 1 2 3 等
+    Sub int64
+}
+ 
+ 
+// generation 保存了 key 的历史版本
+type generation struct {
+    ver     int64 // 版本号
+    created Revision // 最后一次被创建的 revision
+    revs    []Revision // 保存了 key 的历史 revision
+}
+
+
+写请求
+1.客户端使用gRPC API发起写请求
+2.Quota--检查当前 etcd db 大小加上key-value 大小之和是否超过了配额,Preflight Check为了保证集群稳定性，避免雪崩,会做一些简单的判
+断,如已提交的日志索引超过5000、token无效、包大于1.5M。通过检查后生产唯一ID，向Raft发起Proposal，默认等待7秒(5 秒磁盘 IO 延时 +2*1 秒竞选超时时间),收到结果后将日志条目添加到先进先出（FIFO）调度队列。
+3.raft--如果是Follower节点，转发给leader处理写请求。leader会将put提案消息广播给集群各个节点，同时集群 Leader 任期号、投票信息、已提交索引、提案内容持久化到WAL。当一半以上节点持久化此日志条目后，通知原来节点数据已提交。
+4.Apply--按入队顺序，异步、依次执行提案内容。
+  刚开始执行就宕机，重启时如何恢复日志。从WAL解析Raft日志条目，追加到Raft日志中，并重放日志提案给Apply执行，在执行提案内容前先查询consistent index是否存在，不存在才新增同时无 db 配额满告警,进入到 MVCC 模块。
+5.MVCC--内存索引模块 treeIndex,持久化存储boltdb 模块
+  5.1 从boltdb获取key的最大版本号 currentRevision,然后从 treeIndex 模块中查询 key 的创建版本号、修改次数信息, 更新treeIndex信息，这些信息将填充到 boltdb 的 value 中，同时将用户的 hello key 和 revision 等信息存储到B-tree       
+  5.2 更新内存数据后，会先将数据写入到 bucket buffer缓存，异步机制定时（默认每隔 100ms）将批量事务一次性提交（pending 事务过多才会触发同步提交）               
+
+
+WAL日志结构: 
+    Len Field、
+    Type(文件元数据记录、日志条目记录、状态信息记录、CRC 记录、快照记录)
+      文件元数据记录包含节点 ID、集群 ID 信息，它在 WAL 文件创建的时候写入；
+      日志条目记录包含 Raft 日志信息，如 put 提案内容；
+      状态信息记录，包含集群的任期号、节点投票信息等，一个日志文件中会有多条，以最后的记录为准；
+      CRC 记录包含上一个 WAL 文件的最后的 CRC（循环冗余校验码）信息， 在创建、切割 WAL 文件时，作为第一条记录写入到新的 WAL 文件， 用于校验数据文件的完整性、准确性等；
+      快照记录包含快照的任期号、日志索引信息，用于检查快照文件的准确性。
+    CRC、
+    Data
+
+怎么避免数据丢失crash-safe
+WAL日志
+
+幂等性
+当更新数据和更新 consistent index到boltdb操作都成功时，使用consistent index字段来存储系统当前已经执行过的日志条目索引。
+
+Apply 模块在执行提案内容前，首先会判断当前提案是否已经执行过了，如果执行了则直接返回，若未执行同时无 db 配额满告警，则进入到 MVCC 模块，开始与持久化存储模块交互
+
+事务提交包含 B+tree 的平衡、分裂，将 boltdb 的脏数据（dirty page）、元数据信息刷新到磁盘
+优化：合并再合并
+  1.调整 boltdb 的 bucket.FillPercent 参数，使每个 page 填充更多数据，减少 page 的分裂次数并降低 db 空间。
+  2.合并多个写事务请求,是异步机制定时（默认每隔 100ms）将批量事务一次性提交（pending 事务过多才会触发同步提交）
+  3.第二点会影响数据实时性，通过引入bucket buffer缓存来保存暂未提交的事务数据,定期将bucket buffer同步到 BoltDB
+
+
+
