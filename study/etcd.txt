@@ -131,13 +131,13 @@
 type keyIndex struct {
     key         []byte // key 的值
     modified    Revision // 最后一次修改的 main revision
-    generations []generation // 保存了 key 的历史版本 没删除一次然后添加一次就是一个 generation
+    generations []generation // 每个generation保存创建到删除的版本，删除操作后新增一个空的generation
 }
  
 type Revision struct {
-    // 就是 revision 的值，比如上边的 15 等
+    // 就是 revision 的值，同个事务相同，不同事务不同
     Main int64
-    // 子 revision 的值 主要是在事务中使用 比如事务中多个操作 那么就是 0 1 2 3 等
+    // 同一个事务中递增
     Sub int64
 }
  
@@ -145,9 +145,30 @@ type Revision struct {
 // generation 保存了 key 的历史版本
 type generation struct {
     ver     int64 // 版本号
-    created Revision // 最后一次被创建的 revision
+    created Revision // generation结构创建时的版本号
     revs    []Revision // 保存了 key 的历史 revision
 }
+
+如何实现MVCC多版本控制
+ 1.由B-tree实现的tree Index,节点keyIndex由key、modified revision、generation组成
+ 2.boltdb基于B+ tree实现，key为revision{2,0}，value由key、value、create_revision、mod_revision、version、lease 组成
+
+ 新增流程
+   1.根据key查询tree Index获取KeyIndex，如果查不到构建boltdb的key，value写入boltdb和buffer，
+     再创建KeyIndex，更新写入到treeIndex，backend异步事务提交，默认1万事务
+ 更新流程
+   1.根据key查询tree Index获取KeyIndex，设置版本号，修改次数等信息后构建boltdb的key，value写入boltdb和buffer，
+     再更新KeyIndex，更新写入到treeIndex，backend异步事务提交，默认1万事务
+ 删除流程
+   1.根据key查询tree Index获取KeyIndex，生成的 boltdb key 版本号{4,0,t}追加了删除标识，
+     boltdb value变成只含用户key的KeyValue结构体。treeIndex中的keyIndex对象追加一个空的generation对象，表示此索引对应的key被删除了
+   2.再次查询时treeIndex 模块根据 key hello 查找到 keyindex 对象后，若发现其存在空的 generation 对象，
+     并且查询的版本号大于等于被删除时的版本号，则会返回空。
+   3.key打上删除标记t后有哪些用途呢？什么时候会真正删除它呢
+      删除 key 时会生成 events，Watch 模块根据 key 的删除标识，会生成对应的Delete 事件。
+      当重启etcd，遍历 boltdb 中的 key 构建 treeIndex 内存树时，需要知道哪些 key 是已经被删除的
+      真正删除treeIndex 中的索引对象、boltdb 中的 key 是通过压缩 (compactor) 组件异步完成。
+
 
 
 写请求
@@ -186,6 +207,27 @@ Apply 模块在执行提案内容前，首先会判断当前提案是否已经�
   1.调整 boltdb 的 bucket.FillPercent 参数，使每个 page 填充更多数据，减少 page 的分裂次数并降低 db 空间。
   2.合并多个写事务请求,是异步机制定时（默认每隔 100ms）将批量事务一次性提交（pending 事务过多才会触发同步提交）
   3.第二点会影响数据实时性，通过引入bucket buffer缓存来保存暂未提交的事务数据,定期将bucket buffer同步到 BoltDB
+
+lease
+ 使用场景
+  1.服务发现与保活：动态管理服务实例的生命周期
+  2.分布式锁：协调多个实例对共享资源的访问
+  3.缓存管理：自动清理过期的缓存数据
+  4.配置管理：动态更新和清理配置信息
+ lessor
+   管理lease的生命周期：
+    创建(持久化到BoltDB,并存储在leaseMap，Leader节点会被加到最小堆)
+    续租(Leader节点接收续租请求后，会更新 Lease 的过期时间，并通过Raft协议将更新同步到其他节点)
+    撤销(定期检查,获取最小堆堆顶检查是否过期,Lease 过期触发撤销操作，删除绑定的键值对,通过 Raft 日志同步到其他节点)
+       Checkpoint 时间间隔为 5 分钟，解决 Leader 切换时的 Lease 状态一致性问题，新 Leader 可能无法正确重建 Lease 的剩余 TTL，导致 Lease 永远无法删除，进而引发资源泄漏
+       查找需要同步的lease，判断下一次checkpoint时间(通常是TTL的1/3, 1/2)小于当前时间，
+   RevokeExpireLease定时任务协程:维护leaseExpireNotifierHeap小顶堆，根据key的TTL排序
+   CheckpointScheduledLeases定时任务协程：维护CheckPointHeap小顶堆，将Lease的剩余TTL同步到其他节点
+ Lease：包含LeaseID、TTL（存活时间）、过期时间等信息
+
+
+
+
 
 
 
