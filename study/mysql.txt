@@ -1,5 +1,76 @@
+1.mysql组件
+ server层
+  连接器：管理连接，权限验证
+  分析器：词法分析、语法分析
+  优化器：执行计划生成，索引选择
+  执行器：操作存储引擎，返回结果
+ 存储引擎：存储数据，提供读写接口
+
+2.从更新流程理解redo log(重做日志)和bin log(归档日志)
+ 1.redo log 是 InnoDB 引擎特有的；binlog 是 MySQL 的 Server 层实现的，所有引擎都可以使用。
+ 2.redo log 是物理日志，记录的是“在某个数据页上做了什么修改”；binlog 是逻辑日志，记录的是这个语句的原始逻辑，比如“给 ID=2 这一行的 c 字段加 1 ”。
+ 3.redo log 是循环写的，空间固定会用完；binlog 是可以追加写入的。“追加写”是指 binlog 文件写到一定大小后会切换到下一个，并不会覆盖以前的日志。
+ 4.redo log有write pos当前记录的位置 和 checkpoint当前要擦除的位置
+
+ update T set c=c+1 where ID=2;
+ 1.执行器根据ID=2查找引擎，引擎查找内存或磁盘返回数据，
+ 2.执行器将c值加1，调用引擎接口写入
+ 3.引擎将数据更新内存，并将更新日志记录redo log，状态为prepare
+ 4.执行器生成binlog，并写入磁盘
+ 5.执行器调引擎提交事务接口，将redo log改成提交状态(两阶段提交)，更新结束。
+
+3.删除主键索引和二级索引有什么影响，如何优化？
+ 作用：减少碎片空间，页分裂，优化查询速度
+ 二级索引：主要取决于该索引的大小，会锁定表，二级索引的结构是独立于表数据存储的
+ 主键索引：由于表数据是按照主键索引的顺序存储的，过程会涉及对表数据的重新组织，可能会扫描整个表
+ 优化：
+  1.ALTER TABLE your_table_name ADD INDEX your_index_name (column_name) ALGORITHM=INPLACE; (5.6版本之后)
+  2.使用 Percona 工具,pt-online-schema-change --alter "ADD INDEX your_index_name (column_name)" D=your_database,t=your_table_name
+  3.alter table T engine=InnoDB，重建索引 k 的做法是合理的，可以达到省空间的目的。但是，重建主键的过程不合理。不论是删除主键还是创建主键，都会将整个表重建
+
+  死锁
+  1.innodb_lock_wait_timeout 默认值是 50s，当出现死锁以后，第一个被锁住的线程要过 50s 才会超时退出
+  2.innodb_deadlock_detect 默认on，主动死锁检测，每当一个事务被锁，检查所依赖的线程有没有被其他事务锁住，复杂度是 O(n)，容易引起CPU升高
+
+
+4.监控mysql
+ 1.事务方面
+   监控 information_schema.Innodb_trx 表，设置长事务阈值，超过就报警 / 或者 kill
+   在业务功能测试阶段要求输出所有的 general_log，分析日志行为提前发现问题
+
+5.参数调优
+  innodb_undo_tablespaces 设置成 2（或更大的值）。如果真的出现大事务导致回滚段过大，这样设置后清理起来更方便(5.6版本后)
+  innodb_io_capacity 脏页刷盘速度，设置成磁盘的 IOPS
+    使用 fio -filename=$filename -direct=1 -iodepth 1 -thread -rw=randrw -ioengine=psync -bs=16k -size=500M -numjobs=10 -runtime=10 -group_reporting -name=mytest 计算磁盘随机读写速度
+    查询速度下降时可以关注Innodb_buffer_pool_pages_dirty/Innodb_buffer_pool_pages_total的脏页比例超过75%
+
+6.索引
+ 1.覆盖索引，只查询二级索引，避免回主表查
+   设计方式：1.通过调整顺序，可以少维护一个索引； 2.考虑空间，如name 字段是比 age 字段大的，建议创建一个（name,age) 的联合索引和一个 (age) 的单字段索引
+ 2.最左前缀原则，联合索引的最左 N 个字段，也可以是字符串索引的最左 M 个字符
+ 3.索引下推，在联合索引中，根据前缀索引规则，可以在索引遍历过程中，对索引中包含的字段先做判断，直接过滤掉不满足条件的记录，减少回表次数
+
+7.锁可以分成全局锁、表级锁和行锁三类
+ 全局锁：对整个数据库实例加锁。Flush tables with read lock；set global readonly=true(不推荐，判断一个库是备库；如果客户端发生异常，则数据库就会一直保持 readonly 状态)
+  使用场景：全库逻辑备份，把整库每个表都 select 出来存成文本
+ 表级锁：
+  1.表锁，lock tables … read/write
+   使用场景：还没有出现更细粒度的锁，是最常用的处理并发的方式
+  2.元数据锁MDL（metadata lock)
+   使用场景：5.5 版本，表做增删改查操作加 MDL 读锁；表做结构变更操作加 MDL 写锁
+   锁规则：读锁之间不互斥，读写锁之间、写锁之间是互斥
+   缺点：如果有大量线程请求读锁，会影响表不能变更。如果表变更缓慢，会影响其他线程读写表
+    建议在 alter table 语句里面设定等待时间，如果在这个指定的等待时间里面能够拿到 MDL 写锁最好，拿不到也不要阻塞后面的业务语句，先放弃。之后开发人员或者 DBA 再通过重试命令重复这个过程
+  3.行锁，引擎实现的
+
+7.语句优化
+ 查看表索引
+ show index from table
+ 优化表统计信息
+ analyze table t
+
 问题：如何实现隔离级别（读未提交，读已提交，可重复读，串行化）
-答案：1）读已提交（记录锁）/可重复读（记录锁+间隙锁）：MVVC
+答案：1）读已提交（记录锁，每一个语句执行前都会重新算出一个新的视图）/可重复读（记录锁+间隙锁，共用一个一致性视图）：MVVC
 2）串行化：使用排他锁（exclusive lock）来锁定事务正在读取或修改的数据，防止其他事务对同一数据进行并发操作。
 
 问题：可重复读的底层原理（执行第一个查询语句后创建read view）,很大程度上避免幻读现象（并不是完全解决了），解决的方案有两种：
