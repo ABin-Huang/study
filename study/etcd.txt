@@ -9,7 +9,7 @@
  Candidate，竞选者，可以发起 Leader 选举；
  Leader，集群领导者， 唯一性，拥有同步日志的特权，需定时广播心跳给 Follower 节点，以维持领导者身份。
 
- 多副本复制机制：主从负责(全同步复制、异步复制、半同步复制)、去中心化复制
+ 多副本复制机制：主从复制(全同步复制、异步复制、半同步复制)复制算法、去中心化复制(共识算法)
 
  2.leader选举：当节点认为集群中没有leader节点时会发起选举，Follower先发起PreVote(默认关闭,避免节点长时间无法连通网络问题引起的leader选举)，进入 PreCandidate 状态，不自增任期号，若获得集群多数节点认可进入 Candidate 状态，并发起竞选Leader投票，若获得集群多数节点的支持后，就可转变成Leader节点
   
@@ -85,14 +85,17 @@
     日志匹配：Follower节点会检查相同索引位置的任期号是否与Leader一致，一致才能追加
 
  冲突解决机制：
-  1.找到一致的日志位置，Leader获取nextIndex，想follower发送下一条需要发送的日志条目索引，如果Follower拒绝（例如，PrevLogIn  或 PrevLogTerm 不匹配），Leader 会递减 nextIndex，并重新发送。直到找到 Leader 和 Follower 都认可的日志位置
+  1.找到一致的日志位置，Leader获取nextIndex，想follower发送下一条需要发送的日志条目索引，如果Follower拒绝（例如，PrevLogIn  或 PrevLogTerm 不匹配），
+    Leader 会递减 nextIndex，并重新发送。直到找到 Leader 和 Follower 都认可的日志位置
   2.删除冲突日志，Follower会删除该位置之后的所有冲突日志条目，Leader然后将自己从该位置之后的所有日志条目发送给Follower，确保  Follower的日志与Leader一致
 
 
  5.鉴权机制
-  密码认证(内外环境)：blowfish 算法，基于明文密码、随机分配的salt、自定义的 cost、迭代多次计算得到一个 hash 值，并将加密算法版本、salt 值、cost、hash 值组成一个字符串，作为加密后的密码。认证时，根据用户名获取密码信息，根据请求的明文密码，计算出最终的hash值，判断计算结果与存储一致。
+  密码认证(内外环境)：blowfish 算法，基于明文密码、随机分配的salt、自定义的 cost、迭代多次计算得到一个 hash 值，并将加密算法版本、salt 值、cost、hash 值组成一个字符串，
+        作为加密后的密码。认证时，根据用户名获取密码信息，根据请求的明文密码，计算出最终的hash值，判断计算结果与存储一致。
     优化：减少加密次数。使用Simple Token 和 JWT Token
-    Simple Token：当一个用户身份验证通过后，生成一个随机的字符串值，使用map存储用户和Token映射关系，token默认有效期5分钟，token不存储任何信息，导致客户端无法提前去规避因Token失效导致的请求报错。
+    Simple Token：当一个用户身份验证通过后，生成一个随机的字符串值，使用map存储用户和Token映射关系，token默认有效期5分钟，token不存储任何信息，
+        导致客户端无法提前去规避因Token失效导致的请求报错。
 
   证书认证
 
@@ -169,7 +172,8 @@ type generation struct {
       当重启etcd，遍历 boltdb 中的 key 构建 treeIndex 内存树时，需要知道哪些 key 是已经被删除的
       真正删除treeIndex 中的索引对象、boltdb 中的 key 是通过压缩 (compactor) 组件异步完成。
 
-
+ 并发读：创建读事务对象时，它会全量拷贝当前写事务未提交的 buffer 数据，并发的读写事务不再阻塞在一个 buffer 资源锁上
+  treeIndex的ReadTxn，Backend/boltdb的ReadTx
 
 写请求
 1.客户端使用gRPC API发起写请求
@@ -224,6 +228,118 @@ lease
    RevokeExpireLease定时任务协程:维护leaseExpireNotifierHeap小顶堆，根据key的TTL排序
    CheckpointScheduledLeases定时任务协程：维护CheckPointHeap小顶堆，将Lease的剩余TTL同步到其他节点
  Lease：包含LeaseID、TTL（存活时间）、过期时间等信息
+
+Watch：如何高效获取数据变化通知
+ 1.client 获取事件的机制
+   轮询：v2版本中使用HTTP/1.x,每个watcher对应一个TCP，使用长连接定时轮询server，watcher太多server的QPS高，socket，内存占用资源多
+        v3版本中HTTP/2的gRPC，实现了连接多路复用，一个 client/TCP 连接支持多 gRPC Stream， 一个 gRPC Stream 又支持多个 watcher，
+          当 watch 连接的节点故障，clientv3 库支持自动重连到健康节点，并使用之前已接收的最大版本号创建新的 watcher，避免旧事件回放
+   流式推送：v3
+ 2.事件是如何存储的，会保留多久，watch 命令中的版本号具有什么作用
+    MVCC 机制则将历史版本保存在磁盘中，避免了历史版本的丢失
+    版本号是 etcd 逻辑时钟，当 client 因网络等异常出现连接闪断后，通过版本号，它就可从 server 端的 boltdb 中获取错过的历史事件，而无需全量同步，它是 etcd Watch 机制数据增量同步的核心。
+ 3.出现网络异常后，事件堆积，server如何处理事件，监听不存在的版本号，会发生什么  本质：可靠的事件推送机制
+   需要理解watch的工作流程，客户端和服务端是怎么协作完成
+   serverWatchStream：recvLoop、sendLoop
+   WatchStream
+   WatchableKV(watchableStore)
+   syncWatchersLoop
+   syncVictimsLoop
+   unsynced watcher
+   victim watcher
+   synced watcher
+ 4.海量监听key变化，如何根据变化的key快速找到对应的watch
+   使用map记录了监听单个key的watcher，监听多个key使用区间树
+   etcd首先需要从map查找是否有watcher监听了单key，再从区间树找出与此key相交的所有区间，然后从区间的值获取监听的watcher集合
+
+5.etcd的3种事务机制
+ 1)读提交：只有数据回写到buffer才能被读取，是当前读
+ 2)可重复读：创建读缓存，将数据写入读缓存，后续查询都先查找读缓存
+ 3)串行化快照：在事务刚开始时，首先获取 etcd 当前的版本号 rev，事务中后续发出的读请求都带上这个版本号 rev，
+    确保事务提交时，你读写的数据都是最新的，未被其他人修改，也就是要增加冲突检测机制。当事务提交出现冲突的时候依赖 client 重试解决，安全地实现多 key 原子更新。
+
+6.boltdb的数据结构，在member/snap/db 的文件， page size 为 4KB。
+ 每个页面的结构由以下部分组成：
+  页 ID（id）：标识页面的唯一 ID。
+  页类型（flags）：标识页面的类型（如 Meta Page、Branch Page、Leaf Page 等）。
+  数量（count）：页面中存储的元素数量（仅在 Branch 和 Leaf 页面中生效）。
+  溢出页数量（overflow）：当页面数据存放不下时，需要申请的额外连续页面数量。
+  页面数据起始位置（ptr）：指向页面的载体数据，如 Meta Page、Branch/Leaf 等页面的内容。
+
+ 2个meta page：元数据页
+   Magic Number（4 字节）：用于识别文件是否为 BoltDB 文件，其值为 0xED0CDAED。
+   Version（2 字节）：表示 BoltDB 的版本号。
+   Page Size（4 字节）：指定每个页面的大小，通常为 4KB。
+   Flags（4 字节）：用于存储一些标志位，通常为 0。
+   Root Bucket（16 字节）：描述了 BoltDB 的根 bucket 信息，包括根 bucket 的位置和相关信息。
+   Freelist Page ID（8 字节）：指向空闲页管理页的页面 ID，用于记录哪些页面是空闲的。
+   Total Page ID（8 字节）：表示当前数据库文件中已分配的总页面数。
+   Last Write Transaction ID（8 字节）：记录上一次写事务的 ID。
+   Checksum（8 字节）：用于校验文件的完整性，检测文件是否损坏。
+ freelist page: 空闲页管理页
+ branch page: B+ tree 索引节点页
+ leaf page: B+ tree 叶子节点页
+ 2个free page：空闲页
+
+7. boltdb 是如何根据元数据页面信息快速找到你的bucket 和 key-value 数据呢？
+ 1)读取meta page,通过 txid 比较两页，选择 txid 更大且校验和有效的页,获取根 bucket 的根页面 ID
+ 2)根据根页面 ID，找到对应的 Leaf Page 或 Branch Page
+    如果根页面是 Leaf Page，走第四步
+    如果根页面是 Branch Page，则需要递归查找。走第三步
+ 3)在 Branch Page 中，通过二分查找匹配目标 key，获取其子节点的页面 ID，递归访问子节点页面，直到找到目标的 Leaf Page
+ 4)在 Leaf Page 中，通过二分查找匹配目标 key
+     如果找到匹配的 key，返回对应的 value 数据。
+     如果 key 不存在，返回未找到的提示。
+
+8.boltdb Open API 的原理
+ 1)首先它会打开 db 文件并对其增加文件锁，目的是防止其他进程也以读写模式打开它后，操作 meta 和 free page，导致 db 文件损坏
+ 2) boltdb 通过 mmap 机制将 db 文件映射到内存中，并读取两个 meta page 到 db对象实例中，
+ 然后校验 meta page 的 magic、version、checksum 是否有效，若两个meta page 都无效，那么 db 文件就出现了严重损坏，导致异常退出
+
+9.boltdb Put 原理
+ 1)获取meta page 中记录 root bucket的 root page，从 root page 递归搜索到对应的叶子节点page 面，返回 key 名称、leaf 类型
+ 2)如果 leaf 类型为 bucketLeafFlag，且 key 相等，说明已经创建过结束请求。否则往 B+ tree 中添加一个 flag 为 bucketLeafFlag 的 key，
+   key称为 bucket name，value 为 bucket 的结构。
+ 3)创建完 bucket 后,以通过 bucket 的 Put API 发起一个 Put 请求更新数据,根据子 bucket 的 root page，从 root page 递归搜索此 key到 leaf page，
+   如果没有找到，则在返回的位置处插入新 key 和 value。只是将值更新到 boltdb 的内存 node 数据结构里，并未持久化到磁盘中。
+ 4)事务提交(真正持久化数据到磁盘)，进行删除节点后重平衡操作、分裂操作、持久化freeList、持久化dirty page、持久化meta page
+    注意：在 etcd v3.4.9 中，为了优化写性能等，freelist 持久化功能是关闭的。etcd 启动获取 boltdb db 对象的时候，boltdb 会遍历所有 page，构建空闲页列表
+
+10.事务提交过程中若持久化 key-value 数据到磁盘成功了，此时突然掉电，元数据还未持久化到磁盘，会发生什么
+ 1)数据一致性问题: 元数据页（Meta Page）包含数据库的根 bucket 信息、事务 ID 等关键信息。如果元数据未持久化，数据库在恢复时可能无法正确识别哪些数据是有效的，哪些是未完成的事务
+ 2)数据丢失或损坏: 如果元数据页未持久化，数据库在恢复时可能无法正确解析 B+ 树的结构，导致部分数据丢失或损坏。
+ 数据恢复机制：BoltDB在启动时会检查两个元数据页的一致性。如果发现不一致，会尝试从另一个页恢复数据。
+  检查元数据页：检查两个元数据页的一致性，选择一个有效的元数据页用于恢复。
+  校验数据完整性：通过元数据页中的事务 ID 和校验码，校验数据的完整性。
+  修复 B+ 树：根据元数据页中的信息，修复 B+ 树的结构，确保数据的一致性。
+
+11.历史版本回收机制
+ 原理： 会更新当前 server 已压缩的版本号，并将耗时昂贵的压缩任务保存到FIFO 队列中异步执行。当任务执行时，压缩treeIndex模块中的keyIndex索引，
+   其次会遍历 boltdb 中的 key，删除已废弃的 key。
+ 1)时间周期性压缩
+   根据配置的模式，创建 periodic Compactor异步的获取、记录过去一段时间的版本号，将配置压缩间隔时间划分10份，
+   每隔一份通过 etcd MVCC 模块的接口获取当前的 server 版本号，追加到 rev 数组中。
+ 2)版本号压缩，使用场景写请求比较多
+   创建 revision Compactor。revision Compactor 会根据你设置的保留版本号数，每隔 5 分钟定时获取当前 server 的最大版本号，
+   减去你想保留的历史版本数，通过 etcd server 的 Compact 接口发起如下的压缩
+ 3)基于 etcd 的 Compact API实现，在业务逻辑代码中、或定时任务中主动触发压缩操作。
+
+ compact原理
+  1)Compact 请求经过 Raft 日志同步给多数节点后，etcd 会从Raft 日志取出 Compact 请求，应用此请求到状态机执行
+  2)会检查 Compact 请求的版本号rev 是否已被压缩过，若是则返回 ErrCompacted 错误给 client
+   检查 rev 是否大于当前 etcd server 的最大版本号，若是则返回 ErrFutureRev 给 client
+  3)检查通过后，通过 boltdb 的 API 在 meta bucket 中更新当前已调度的压缩版本号scheduledCompactedRev，将压缩任务追加到 FIFO Scheduled
+  4) 异步压缩任务首先会克隆一个 B-tree,压缩 treeIndex 模块中的 keyIndex 索引，移除小于等于压缩版本号的历史版本号,
+    通过一个 map 记录 treeIndex 中有效的版本号返回给 boltdb 模块使用
+  5)scheduleCompaction任务,从 0 到 CompactedRev 遍历 boltdb 中的所有 key，通过 treeIndex 模块返回的有效索引信息，
+    判断这个 key 是否有效，无效则调用 boltdb 的 delete 接口将 key-value 数据删除。更新当前 etcd 已经完成的压缩版本号(finishedCompactRev)，
+    将其保存到 boltdb 的 meta bucket 中。(为了不影响正常读写请求,分批完成 boltdb key 的删除操作，控制每次遍历、删除的 key 数，默认为100，每批间隔 10ms)
+ 注意：Watch 特性中的历史版本数据同步，依赖于 MVCC 中是否还保存了相关数据，需要精细化的控制历史版本数
+
+
+
+
+
 
 
 
