@@ -44,6 +44,11 @@
     使用 fio -filename=$filename -direct=1 -iodepth 1 -thread -rw=randrw -ioengine=psync -bs=16k -size=500M -numjobs=10 -runtime=10 -group_reporting -name=mytest 计算磁盘随机读写速度
     查询速度下降时可以关注Innodb_buffer_pool_pages_dirty/Innodb_buffer_pool_pages_total的脏页比例超过75%
 
+  sort_buffer_size 内存排序大小，优先全字段排序，否则rowId，排序字段排序
+  max_length_for_sort_data 控制用于排序的行数据的长度的一个参数，单行的长度超过这个值，MySQL 就认为单行太大，使用rowId
+  tmp_table_size 内存临时表的大小，默认值是 16M，超过则使用磁盘临时表
+  internal_tmp_disk_storage_engine 磁盘临时表使用的引擎默认是 InnoDB
+
 6.索引
  1.覆盖索引，只查询二级索引，避免回主表查
    设计方式：1.通过调整顺序，可以少维护一个索引； 2.考虑空间，如name 字段是比 age 字段大的，建议创建一个（name,age) 的联合索引和一个 (age) 的单字段索引
@@ -68,6 +73,9 @@
  show index from table
  优化表统计信息
  analyze table t
+
+8.排序优化
+ 使用优先队列排序算法，如果排序字段占用内存小于sort_buffer_size。否则只能使用归并排序算法。
 
 问题：如何实现隔离级别（读未提交，读已提交，可重复读，串行化）
 答案：1）读已提交（记录锁，每一个语句执行前都会重新算出一个新的视图）/可重复读（记录锁+间隙锁，共用一个一致性视图）：MVVC
