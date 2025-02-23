@@ -50,7 +50,25 @@
   tmp_table_size 内存临时表的大小，默认值是 16M，超过则使用磁盘临时表
   internal_tmp_disk_storage_engine 磁盘临时表使用的引擎默认是 InnoDB
 
-  sync_binlog=N 每次提交事务都 write，但累积 N 个事务后才 fsync。设置为 100~1000
+  sync_binlog=N 每次提交事务都 write，但累积 N 个事务后才 fsync。设置为 100~1000，通常与innodb_flush_log_at_trx_commit配置为1
+  innodb_flush_log_at_trx_commit 0-事务提交写redo log buffer 1-持久化到磁盘 2-page cache
+
+  binlog_format=‘row’ statement占用空间少，但主备数据可能不一致; mixed会根据语句判断使用哪种日志格式
+  slave_parallel_workers 备库设置8~16 之间最好（32 核物理机的情况），执行sql线程
+   按表分发线程策略：如果两个事务更新相同的表，直到所有线程中只是一个有冲突，分配到该线程
+   按行分发策略：如果两个事务没有更新相同的行，它们在备库上可以并行执行，要考虑主键和唯一索引。占用空间大，解析binlog耗费CPU
+   两个方案其实都有一些约束条件：求业务开发人员必须遵守的线上使用规范
+       1.要能够从 binlog 里面解析出表名、主键值和唯一索引的值。也就是说，主库的 binlog 格式必须是 row；
+       2.表必须有主键；
+       3.不能有外键。表上如果有外键，级联更新的行不会记录在 binlog 中，这样冲突检测就不准确。
+
+  slave-parallel-type
+   DATABASE(5.6):按库分发策略
+   LOGICAL_CLOCK(5.7):
+  binlog-transaction-dependency-tracking(5.7.22)
+   COMMIT_ORDER，表示的就是前面介绍的，根据同时进入 prepare 和 commit 来判断是否可以并行的策略。
+   WRITESET，表示的是对于事务涉及更新的每一行，计算出这一行的 hash 值，组成集合 writeset。如果两个事务没有操作相同的行，也就是说它们的 writeset 没有交集，就可以并行。
+   WRITESET_SESSION，是在 WRITESET 的基础上多了一个约束，即在主库上同一个线程先后执行的两个事务，在备库执行的时候，要保证相同的先后顺序。
 
 
 6.索引
@@ -87,6 +105,13 @@
 
 9.问题排查
  1.短连接风暴解决方法：先处理掉那些占着连接但是不工作的线程; 减少连接过程的消耗,跳过权限验证
+
+10.主备延迟原因
+ 1.备考机器性能差
+ 2.开发或运营会在备考执行操作，查询占用资源
+ 3.主库执行大事务
+ 4.备库的并行复制能力
+
 
 问题：如何实现隔离级别（读未提交，读已提交，可重复读，串行化）
 答案：1）读已提交（记录锁，每一个语句执行前都会重新算出一个新的视图）/可重复读（记录锁+间隙锁，共用一个一致性视图）：MVVC
