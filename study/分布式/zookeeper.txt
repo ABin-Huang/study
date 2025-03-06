@@ -1,0 +1,75 @@
+1.什么是zookeeper
+答案：一个开源的分布式协同服务系统
+
+2.应用
+答案：配置管理、组成员管理、分布式锁。不适用大数据量存储
+
+3.zookeeper为什么使用层次模型
+答案：1.文件系统的树形结构便于表达数据之间的层次关系
+	2.文件系统的树形结构为不同的应用分配独立的命名空间
+
+    ConcurrentHashMap<String, DataNode> nodes用节点的完整路径来作为 key 存储节点数据
+	ZNode 是 ZooKeeper 数据模型的基本单元，每个 ZNode 都有以下三个主要部分：
+    Data：存储实际数据，数据大小限制为 1MB。
+    Children：子节点列表，每个 ZNode 可以有多个子节点。
+    Stat：状态信息，包括版本号、时间戳、ACL 等。
+
+4.znode节点分类
+答案：1.持久性znode(PERSISTENT),存储配置信息
+     2.临时性znode(EPHEMERAL)，服务器集群内机器运行情况的统计
+
+     ZooKeeper 服务器会自动使用一个单调递增的数字作为后缀
+     3.持久顺序性znode(PERSISTENT_SEQUENTIAL)
+     4.临时顺序性znode(EPHEMERAL_SEQUENTIAL)
+
+发布订阅模式之watch机制
+ 客户端：节点路径、事件、回调函数注册到ZKWatchManager，使用TCP连接服务端，通过心跳维护连接，收到服务端响应后判断事件类型是否相同，以及会话状态。
+    调用回调函数后会重新注册watch事件。
+ 服务端：将节点路径、事件注册到WatchManager，监听节点变化，通知客户端，如果会话关闭，删除对应客户端的注册事件
+
+权限模式
+ Scheme（授权模式）：定义授权策略。world、auth、digest、ip、super
+ ID（授权对象）：指定授权的对象（如用户、IP 地址等）。
+ Permissions（权限）：定义允许的操作CREATE、DELETE、READ、WRITE、ADMIN
+
+jute序列化，默认使用Binary方式
+ 选择这个可能是因为历史原因和兼容性，尽管存在许多性能更好的序列化框架（如 Apache Avro、Thrift 或 Protobuf），但 Jute 的性能已经足够满足 ZooKeeper 的需求。
+ Jute 的设计相对简单，易于实现和维护。它提供了多种序列化方式（如 Binary、CSV 和 XML），但 ZooKeeper 主要使用 Binary 方式，因为它在性能和存储效率上表现良好
+ Binary：底层实现相对简单，只是采用将对应的 Java 对象转化成二进制字节流的方式。Jute 提供了对字节和缓冲区的序列化操作，确保在不同操作系统之间正确传输和解析数据
+ CSV：格式采用逗号将文本进行分割，
+    以 String 字符对象序列化为例，在调用 CsvOutputArchive 的 writeString 方法时，writeString 方法首先调用 printCommaUnlessFirst 方法生成一个逗号分隔符，
+    之后将要序列化的字符串值转换成 CSV 编码格式追加到字节数组中
+ XML：XML 是一种可扩展的标记语言。当初设计的目的就是用来传输和存储数据。Jute 定义好的格式，采用设定好的默认标签封装成对应的序列化文件
+
+5.zookeeper节点硬件要求
+答案：1.单独的服务器 
+	2.zookeeper在内存保存data tree。8G内存 
+	3.CPU消耗不高，有一个CPU核即可
+	4.存储设备写延迟会影响事务提交效率，建议为dataLogDir分配独占的SSD盘
+
+6.日志文件
+答案：生产环境建议使用ROOLINGFILE
+
+7.生产环境部署zookeeper
+答案： 1.申请多个服务器节点，每个节点有两个挂载盘
+	  2.每个节点安装JDK8
+	  3.每个节点为dataLogDir初始化独立我呢见系统/data，编辑/data/zookeeper/myid
+	  4.节点之间配置基于public key的ssh登录
+	  5.在一个节点解压zookeeper安装包，配置zoo.cfg。使用rsync吧目录同步其他节点
+
+8.zookeeper监控
+答案： telnet或ncat向zooke发出检查节点状态的命令
+	echo 命令 | ncat ip port
+
+	JMXL:jconsole(MBeans),
+	远程连接zookeeper，先在节点 export JMXPORT=8081
+
+9.zookeeperObserver
+答案：Observer不参与提交和选举投票的过程,作用实现跨数据中心部署
+	
+
+10.通过动态配置实现不中断服务的集群成员变更
+答案：
+
+11.ZooKeeper节点是如何存储数据的
+答案：快照

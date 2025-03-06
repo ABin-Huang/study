@@ -213,6 +213,13 @@ Apply 模块在执行提案内容前，首先会判断当前提案是否已经�
   3.第二点会影响数据实时性，通过引入bucket buffer缓存来保存暂未提交的事务数据,定期将bucket buffer同步到 BoltDB
 
 lease
+ 数据结构
+  ID：租约的唯一标识符（LeaseID）。
+  ttl：租约的总存活时间（int64）。
+  remainingTTL：租约的剩余存活时间（int64），用于优化续约和计算逻辑。
+  expiry：租约的到期时间（time.Time），可以被设置为forever。
+  itemSet：记录绑定了该租约的键集合（map[LeaseItem]struct{}）。
+  revokec：一个信号通道，用于租约被撤销时的通知（chan struct{}），协程会监听该信号通道，发现是关闭则释放资源
  使用场景
   1.服务发现与保活：动态管理服务实例的生命周期
   2.分布式锁：协调多个实例对共享资源的访问
@@ -232,9 +239,8 @@ lease
 Watch：如何高效获取数据变化通知
  1.client 获取事件的机制
    轮询：v2版本中使用HTTP/1.x,每个watcher对应一个TCP，使用长连接定时轮询server，watcher太多server的QPS高，socket，内存占用资源多
-        v3版本中HTTP/2的gRPC，实现了连接多路复用，一个 client/TCP 连接支持多 gRPC Stream， 一个 gRPC Stream 又支持多个 watcher，
-          当 watch 连接的节点故障，clientv3 库支持自动重连到健康节点，并使用之前已接收的最大版本号创建新的 watcher，避免旧事件回放
-   流式推送：v3
+   流式推送：v3版本中HTTP/2的gRPC，实现了连接多路复用，一个 client/TCP 连接支持多 gRPC Stream， 一个 gRPC Stream 又支持多个 watcher，
+           当 watch 连接的节点故障，clientv3 库支持自动重连到健康节点，并使用之前已接收的最大版本号创建新的 watcher，避免旧事件回放
  2.事件是如何存储的，会保留多久，watch 命令中的版本号具有什么作用
     MVCC 机制则将历史版本保存在磁盘中，避免了历史版本的丢失
     版本号是 etcd 逻辑时钟，当 client 因网络等异常出现连接闪断后，通过版本号，它就可从 server 端的 boltdb 中获取错过的历史事件，而无需全量同步，它是 etcd Watch 机制数据增量同步的核心。
@@ -336,7 +342,13 @@ Watch：如何高效获取数据变化通知
     将其保存到 boltdb 的 meta bucket 中。(为了不影响正常读写请求,分批完成 boltdb key 的删除操作，控制每次遍历、删除的 key 数，默认为100，每批间隔 10ms)
  注意：Watch 特性中的历史版本数据同步，依赖于 MVCC 中是否还保存了相关数据，需要精细化的控制历史版本数
 
-
+12.不建议你的etcd集群db大小超过8G
+ 1)启动耗时,etcd启动的时候，需打开boltdb db文件，读取db文件所有key-value数据，用于重建内存treeIndex模块
+ 2)节点内存配置,etcd在启动的时候会通过mmap将db文件映射内存中，若节点可用内存不足，小于db文件大小时，可能会出现缺页文件中断，导致服务稳定性、性能下降
+ 3)treeIndex 索引性能,因etcd不支持数据分片，内存中的treeIndex若保存了几十万到上千万的key，这会增加查询、修改操作的整体延时
+ 4)boltdb性能,大db文件场景会导致事务提交耗时增长、抖动
+ 5)集群稳定性,一旦出现expensive request后，很容易导致etcd OOM、节点带宽满而丢包
+ 6)
 
 
 
