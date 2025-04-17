@@ -73,3 +73,107 @@ jute序列化，默认使用Binary方式
 
 11.ZooKeeper节点是如何存储数据的
 答案：快照
+
+12.网络通信协议
+客户端：请求头由xid(请求的发起顺序) 和 type(请求操作的类型，不同类型封装不同的结构请求体)组成
+      请求体由请求头的type决定，如ConnectRequest、GetDataRequest、SetDataRequest
+服务端：响应头xid、zxid、err错误状态
+      响应体ConnectResponse、GetDataResponse、SetDataResponse
+
+13.单机启动流程
+1）解析配置文件，解析配置文件 zoo.cfg
+2）创建文件清理器，ZooKeeper 采用了 DatadirCleanupManager 类作为历史文件的清理工具类。
+  在 3.4.0 版本后的 ZooKeeper 中更是增加了自动清理历史数据的功能以尽量避免磁盘空间的浪费
+  在 zoo.cfg 文件中配置 autopurge.snapRetainCount 和 autopurge.purgeInterval 这两个参数实现数据文件的定时清理功能
+3）服务初始化，主要工作是创建用于服务统计的工具类
+  1.ServerStats 类，它可以用于服务运行信息统计，如响应包次数、接收到的请求包次数、延迟情况、处理客户端的请求次数。可以监控服务器的性能
+  2.FileTxnSnapLog 类，可以用于数据存储等操作。它会根据 zoo.cfg 配置文件中的 dataDir 数据快照目录和 dataLogDir 事物日志目录来创建 FileTxnSnapLog 类
+  3.会话管理类，设置服务器 TickTime 和会话超时时间、创建启动会话管理器等操作。创建ServerCnxnFactory类，使用netty和客户端通信
+4）初始化请求处理链，使用责任链模式初始化一个请求处理逻辑上的相关类
+
+14.集群模式
+ Leader 角色服务器负责管理集群中其他的服务器，是集群中工作的分配和调度者。
+ Follow 服务器的主要工作是选举出 Leader 服务器，在发生 Leader 服务器选举的时候，系统会从 Follow 服务器之间根据多数投票原则，选举出一个 Follow 服务器作为新的 Leader 服务器。
+ Observer 服务器则主要负责处理来自客户端的获取数据等请求，并不参与 Leader 服务器的选举操作，也不会作为候选者被选举为 Leader 服务器。
+
+ leader启动
+ 1）创建用来选举 Leader 节点的工具类 QuorumCnxManager
+ 2）在集群中的所有机器中直接进行一次选举投票，选举出一个最适合的机器作为 Leader 节点
+
+ follow启动
+ 1）当 Leader 机器启动成功后，Follow 节点的机器会收到来自 Leader 节点的启动通知
+ 2）LearnerCnxAcceptor 类首先初始化要监听的 Leader 服务器地址和设置收到监听的处理执行方法等操作
+
+15.客户端解析
+ClientCnxn负责维护客户端与服务端的网络连接和信息交互
+ 请求队列：outgoingQueue 客户端发送给服务端的发送队列
+         pendingQueue 服务端响应客户端操作的响应队列，发送请求后将Packet加入，收到服务端响应则移除
+ SendThread：负责将客户端的请求发送给服务端，定期向服务端发送 PING 包来实现心跳检查
+ WatchManager：保存watch事件
+ EventThread：负责客户端的事件处理，通过将要触发的事件对象存放在 waitingEvents 队列中，之后在接收到相应的事件通知时，会从该队列中取出对应的事件信息，
+              之后调用 process 函数进行处理，SendThread收到服务端的事件通知后，
+
+会话状态
+ CONNECTED（已连接状态）：当客户端发起的会话成功连接到服务端后，该条会话的状态变为 CONNECTED 已连接状态。
+ READONLY（只读状态）：与leader失联，当一个客户端会话调用 CuratorFrameworkFactory.Builder.canBeReadOnly() 的时候，该会话会一直处于只读模式，直到重新设置该条会话的状态类型。
+ SUSPENDED（会话连接挂起状态）：当进行 Leader 选举和 lock 锁等操作时，需要先挂起客户端的连接。注意这里的会话挂起并不等于关闭会话，也不会触发诸如删除临时节点等操作。
+ RECONNECTED（重新连接状态）：当已经与服务端成功连接的客户端断开后，尝试再次连接服务端后，该条会话的状态为 RECONNECTED，也就是重新连接。
+    重新连接的会话会作为一条新会话在服务端运行，之前的临时节点等信息不会被保留。
+ LOST（会话丢失状态）：这个比较好理解，当客户端与服务器端因为异常或超时，导致会话关闭时，该条会话的状态就变为 LOST。
+
+16.会话管理
+ExpiryQueue类来实现一个会话过期策略，
+ ConcurrentHashMap<E, Long> elemMap存储每个会话以及对应的过期时间
+ ConcurrentHashMap<Long, Set<E>> expiryMap 存储过期时间以及一组会话
+ 时间间隔公式是（now + timeout / ExpirationInterval + 1） ExpirationInterval
+ SessionTrackerImpl线程会取会话过期的下一个时间点，通过 setSessionClosing 函数设置会话的关闭状态。最后调用 expire 方法进行会话清理工作
+
+17.服务端如何处理一次会话请求
+1）第一个负责处理请求会话是请求预处理器 PrepRequestProcessor，分辨要处理的请求是否是事务性请求，对该条请求创建请求事务头、事务体、会话检查、ACL 检查和版本检查等一系列的预处理工作
+2）事物处理器 PrepRequestProcessor，对事务性的请求操作进行处理，在服务端发起一次投票流程，通知各个机器进行事务性的操作
+ 1.Sync 流程，SyncRequestProcess将该条请求的操作日志记录下来，完成这个操作后，每一台机器都会向 ZooKeeper 服务中的 Leader 机器发送事物日志记录完成的通知
+ 2.Proposal 流程，主要工作就是投票和统计投票结果，leader需要取得在集群中过半数机器的投票
+ 3.Commit 流程，完成请求的执行
+3）最终处理器 FinalRequestProcessor，检查请求的有效性，当前 ZooKeeper 服务所处理的请求是否已经处理过了，如果处理过了，
+  FinalRequestProcessor 处理器就会将该条请求删除；
+
+18.客户端框架Curator
+封装功能：Leader 选举、分布式计数器、分布式锁
+流式编程，使用LeaderSelector 和 LeaderLatch就能实现leader选举
+
+14.如何保证数据的一致性
+1）服务端接收客户端事务性请求操作，使用广播模式，将数据同步各个节点，大多数节点同步成功即可
+2）leader选举，服务端会将会话挂起，此时不计算超时时间。首先进入恢复模式，选举leader，对follow节点同步数据。
+3）存在leader节点，此时加入新节点，该台服务器会在恢复模式下启动，leader会进行快照同步
+
+15.leader选举流程
+1）服务启动时leader选举
+ 首先会进行通信检查，如果集群中的服务器之间能够进行通信。各节点尝试寻找集群中的 Leader 并进行数据同步等操作。这时没有搜索到 Leader 服务器，集群开始发起 Leader 服务器选举。
+ 1.发起投票，每一台服务器都会将自己作为 Leader 服务器进行投票，发送服务器的 myid（服务器标识符）和 ZXID (集群投票信息标识符,包含了epoch、counter)选票信息
+ 2.接收投票，节点首先会判断该条投票信息的有效性。检查该条投票信息的时效性，是否是本轮最新的投票，并检查该条投票信息是否是处于 LOOKING 状态的服务器发出的
+ 3.统计投票，各节点比较投票信息中ZXID数值大小，选出数值大的作为leader，如果ZXID相同，选出myid较大的
+
+2）服务运行时的 Leader 选举
+ 1.变更服务器状，当 Leader 崩溃后，节点首先将自身的状态信息变为 LOOKING 状态，开始进入选举新的 Leader 过程
+ 2.发起投票，
+ 3.接收投票，
+ 4.统计投票，
+
+16.leader与follow节点的同步策略
+ 同步条件: 1.集群初始化
+         2.新 Follower 加入集群
+         3.数据变更
+         4.网络分区或 Leader 故障,重新选举leader
+
+ 同步过程：1.DIFF 同步，
+         2.TRUNC+DIFF 同步， Leader 服务器已经将事务记录到本地事务日志中，但没有成功发起 Proposal 流程
+         3.TRUNC 同步，将 Learnning 服务器上的操作日志数据回滚
+         4.SNAP 同步，全量同步
+
+
+
+
+
+
+
+
