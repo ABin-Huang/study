@@ -2,9 +2,34 @@
 <project version="4">
   <component name="RemoteRepositoriesConfiguration">
     <remote-repository>
+      <option name="id" value="libs-snapshots" />
+      <option name="name" value="libs-snapshots" />
+      <option name="url" value="http://10.79.159.131/nexus/content/repositories/snapshots" />
+    </remote-repository>
+    <remote-repository>
       <option name="id" value="central" />
       <option name="name" value="Central Repository" />
       <option name="url" value="https://repo.maven.apache.org/maven2" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="central" />
+      <option name="name" value="Central Repository" />
+      <option name="url" value="https://codingcorp-maven.pkg.coding.csair.com/repository/gonggongxiangmu/maven-proxy" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="b2cmaven" />
+      <option name="name" value="b2cmaven" />
+      <option name="url" value="http://10.79.4.161:8081/repository/maven-public/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="gonggongxiangmu-maven-proxy" />
+      <option name="name" value="CODING Proxy Repo" />
+      <option name="url" value="https://codingcorp-maven.pkg.coding.csair.com/repository/gonggongxiangmu/maven-proxy" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="libs-central" />
+      <option name="name" value="libs-releases" />
+      <option name="url" value="http://10.79.159.131/nexus/content/repositories/releases" />
     </remote-repository>
     <remote-repository>
       <option name="id" value="central" />
@@ -15,6 +40,21 @@
       <option name="id" value="jboss.community" />
       <option name="name" value="JBoss Community repository" />
       <option name="url" value="https://repository.jboss.org/nexus/content/repositories/public/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="libs-thirdparty" />
+      <option name="name" value="libs-thirdparty" />
+      <option name="url" value="http://10.79.159.131/nexus/content/repositories/thirdparty" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="codingcorp-6550-maven-central" />
+      <option name="name" value="maven-central" />
+      <option name="url" value="https://codingcorp-maven.pkg.coding.csair.com/repository/6550/maven-central/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="15public" />
+      <option name="name" value="i5public" />
+      <option name="url" value="http://10.79.159.131/nexus/content/repositories/public/" />
     </remote-repository>
   </component>
 </project>
